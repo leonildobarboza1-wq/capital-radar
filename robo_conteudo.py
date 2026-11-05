@@ -2,6 +2,8 @@ import os
 import random
 import time
 import requests
+from datetime import datetime
+import zoneinfo
 from google import genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -12,9 +14,7 @@ B_REFRESH_TOKEN = os.environ.get("B_REFRESH_TOKEN")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-CATEGORIAS = ['Bolsa & Ações', 'Criptomoedas', 'Câmbio & Forex', 'Análises & Economia']
-
-# Pools dedicados de imagens de alta qualidade do Unsplash para cada categoria (sem repetição)
+# Pools dedicados de imagens de alta qualidade do Unsplash para cada categoria
 IMAGENS_POR_CATEGORIA = {
     'Bolsa & Ações': [
         "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=1200&q=85",
@@ -57,20 +57,47 @@ def obter_novo_access_token():
     return None
 
 def gerar_artigo():
-    cat_escolhida = random.choice(CATEGORIAS)
+    fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
+    dia_semana = datetime.now(fuso_br).weekday()  # 0=Segunda, 1=Terça, ..., 5=Sábado, 6=Domingo
+
+    # 📅 Regra de Frequência Personalizada:
+    # Seg a Sex (0 a 4): Resumo diário do Fechamento da B3 (Índice e Dólar)
+    # Sábado (5): Forex e Criptomoedas / Bitcoin
+    # Domingo (6): Notícias gerais e Macroeconomia global
+    if dia_semana in [0, 1, 2, 3, 4]:
+        categoria = 'Bolsa & Ações'
+        foco_prompt = (
+            "Você é um analista sênior do mercado financeiro brasileiro. "
+            "Escreva um resumo e análise profunda focada no **fechamento do dia na B3**, "
+            "dando destaque especial ao comportamento dos mini-contratos e à variação do **Índice (WIN) e do Dólar (WDO)**, "
+            "além dos principais fatores que moveram o mercado nacional hoje."
+        )
+    elif dia_semana == 5:
+        categoria = 'Criptomoedas' # ou Câmbio & Forex
+        foco_prompt = (
+            "Você é um especialista em ativos digitais e Forex. "
+            "Escreva uma análise aprofundada sobre o mercado de **Criptomoedas (com foco em Bitcoin e principais altcoins)** "
+            "e o panorama semanal do mercado de câmbio **Forex**, destacando tendências de curto e médio prazo."
+        )
+    else:
+        categoria = 'Análises & Economia'
+        foco_prompt = (
+            "Você é um editor de macroeconomia global. "
+            "Escreva um panorama detalhado com as **notícias gerais e eventos macroeconômicos globais** "
+            "mais importantes que impactam os investimentos e os mercados internacionais."
+        )
 
     prompt = f"""
-    Você é um jornalista e editor visual sênior para o portal 'Crypto & Mercado'.
-    Escreva um artigo rico, cativante e altamente informativo sobre '{cat_escolhida}'.
-
+    {foco_prompt}
+    
     ESTRUTURA OBRIGATÓRIA (HTML):
     [TITULO] Título impressionante e otimizado para SEO [/TITULO]
     [CONTEUDO]
-    <p class="lead"><b>Introdução envolvente destacando o valor visual e a importância do tema...</b></p>
+    <p class="lead"><b>Introdução envolvente destacando o cenário do dia...</b></p>
     <h3>Destaques e Análise Técnica</h3>
-    <p>Explicação aprofundada com detalhes visuais e contextuais...</p>
-    <h3>Conclusão e Tendências</h3>
-    <p>Considerações finais para os leitores...</p>
+    <p>Explicação aprofundada com detalhes contextuais...</p>
+    <h3>Perspectivas e Tendências</h3>
+    <p>Considerações finais para os traders e investidores...</p>
     <br><hr>
     <p><small><i><b>Disclaimer:</b> Conteúdo informativo e educacional.</i></small></p>
     [/CONTEUDO]
@@ -84,19 +111,17 @@ def gerar_artigo():
             )
             texto = response.text
             
-            # Extração segura com validação
             if "[TITULO]" in texto and "[/TITULO]" in texto and "[CONTEUDO]" in texto and "[/CONTEUDO]" in texto:
                 titulo = texto.split("[TITULO]")[1].split("[/TITULO]")[0].strip()
                 conteudo = texto.split("[CONTEUDO]")[1].split("[/CONTEUDO]")[0].strip()
             else:
-                # Fallback caso a IA ignore alguma tag
-                titulo = f"Análise Especializada de Mercado: {cat_escolhida}"
-                conteudo = f"<p class='lead'><b>Panorama atualizado sobre os movimentos recentes em {cat_escolhida}.</b></p><p>{texto}</p>"
+                titulo = f"Análise de Fechamento de Mercado - {categoria}"
+                conteudo = f"<p class='lead'><b>Resumo atualizado dos mercados financeiros.</b></p><p>{texto}</p>"
 
-            imagem_url = obter_imagem_hd(cat_escolhida)
+            imagem_url = obter_imagem_hd(categoria)
             html_final = f'<div class="article-hero"><img src="{imagem_url}" alt="{titulo}" style="width:100%; max-height:500px; object-fit:cover; border-radius:12px; margin-bottom:20px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);"/></div>\n' + conteudo
 
-            return titulo, html_final, cat_escolhida
+            return titulo, html_final, categoria
         except Exception as e:
             print(f"⚠️ Servidor ocupado (Tentativa {tentativa+1}/3). A tentar novamente em 10 segundos... Erro: {e}")
             time.sleep(10)
